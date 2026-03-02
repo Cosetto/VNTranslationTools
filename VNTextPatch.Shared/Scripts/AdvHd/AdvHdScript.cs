@@ -1,33 +1,51 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using VNTextPatch.Shared.Util;
 
 namespace VNTextPatch.Shared.Scripts.AdvHd
 {
+    public enum AdvHdTextEncoding
+    {
+        ShiftJis,
+        Utf16
+    }
+
     public class AdvHdScript : IScript
     {
         public string Extension => ".ws2";
 
-        private static readonly string[] NameControlCodes = { "%LC", "%LF", "%LR" };
+        private static readonly string[] NameControlCodes = { "%LC", "%LF", "%LR", "%L" };
 
         private byte[] _data;
         private readonly List<int> _addressOffsets = new List<int>();
         private readonly List<Range> _textRanges = new List<Range>();
 
+        public AdvHdTextEncoding TextEncoding { get; set; } = AdvHdTextEncoding.ShiftJis;
+
         public void Load(ScriptLocation location)
         {
             _data = File.ReadAllBytes(location.ToFilePath());
+
+            if (_data.IndexOf(Encoding.Unicode.GetBytes("char\0")) != -1)
+            {
+                TextEncoding = AdvHdTextEncoding.Utf16;
+            }
 
             Stream stream = new MemoryStream(_data);
             AdvHdDisassemblerBase[] disassemblers =
                 {
                     new AdvHdDisassemblerV1(stream),
                     new AdvHdDisassemblerV2(stream),
-                    new AdvHdDisassemblerV3(stream)
+                    new AdvHdDisassemblerV3(stream),
+                    new AdvHdDisassemblerV4(stream)
                 };
+
             foreach (AdvHdDisassemblerBase disassembler in disassemblers)
             {
+                disassembler.TextEncoding = TextEncoding;
                 stream.Position = 0;
                 _addressOffsets.Clear();
                 _textRanges.Clear();
@@ -52,7 +70,11 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
         {
             foreach (Range range in _textRanges)
             {
-                string text = StringUtil.SjisEncoding.GetString(_data, range.Offset, range.Length - 1);
+                string text = GetStringFromData(range);
+
+                if (TextEncoding == AdvHdTextEncoding.Utf16 && text == "char")
+                    continue;
+
                 text = RemoveControlCodes(text, range.Type);
                 if (!string.IsNullOrWhiteSpace(text))
                     yield return new ScriptString(text, range.Type);
@@ -68,7 +90,13 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
             using IEnumerator<ScriptString> stringEnumerator = strings.GetEnumerator();
             foreach (Range range in _textRanges)
             {
-                string origText = StringUtil.SjisEncoding.GetString(_data, range.Offset, range.Length - 1);
+                string origText = GetStringFromData(range);
+
+                if (TextEncoding == AdvHdTextEncoding.Utf16 && origText == "char")
+                {
+                    continue;
+                }
+
                 if (string.IsNullOrWhiteSpace(RemoveControlCodes(origText, range.Type)))
                     continue;
 
@@ -76,13 +104,18 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                     throw new InvalidDataException("Not enough strings in translation");
 
                 string newText = stringEnumerator.Current.Text;
-                if (range.Type == ScriptStringType.Message)
+                
+                if (range.Type == ScriptStringType.Message && TextEncoding != AdvHdTextEncoding.Utf16)
                     newText = MonospaceWordWrapper.Default.Wrap(newText);
 
                 newText = AddControlCodes(origText, newText, range.Type);
 
                 patcher.CopyUpTo(range.Offset);
-                patcher.ReplaceZeroTerminatedSjisString(newText);
+
+                if (TextEncoding == AdvHdTextEncoding.Utf16)
+                    patcher.ReplaceZeroTerminatedUtf16String(newText);
+                else
+                    patcher.ReplaceZeroTerminatedSjisString(newText);
             }
 
             if (stringEnumerator.MoveNext())
@@ -94,6 +127,14 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
             {
                 patcher.PatchAddress(offset);
             }
+        }
+
+        private string GetStringFromData(Range range)
+        {
+            if (TextEncoding == AdvHdTextEncoding.Utf16)
+                return Encoding.Unicode.GetString(_data, range.Offset, range.Length - 2);
+            else
+                return StringUtil.SjisEncoding.GetString(_data, range.Offset, range.Length - 1);
         }
 
         private static string RemoveControlCodes(string text, ScriptStringType type)
@@ -135,7 +176,7 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                     if (match.Success)
                         newText += match.Value;
 
-                    newText = newText.Replace("\r\n", " \\n");      // Add space to avoid end-of-line characters getting cut off while message builds up
+                    newText = newText.Replace("\r\n", " \\n");      
                     break;
             }
             return newText;

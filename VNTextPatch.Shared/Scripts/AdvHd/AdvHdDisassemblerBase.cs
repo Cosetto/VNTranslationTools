@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -14,6 +14,8 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
         private readonly BinaryReader _reader;
         private readonly Dictionary<byte, string> _operandTemplates;
         private readonly Dictionary<byte, Action<List<object>>> _opcodeHandlers;
+
+        public AdvHdTextEncoding TextEncoding { get; set; } = AdvHdTextEncoding.ShiftJis;
 
         protected AdvHdDisassemblerBase(Stream stream, Dictionary<byte, string> operandTemplates)
         {
@@ -71,7 +73,11 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                 case Range range:
                     long position = _stream.Position;
                     _stream.Position = range.Offset;
-                    string str = _reader.ReadZeroTerminatedSjisString();
+                    string str;
+                    if (TextEncoding == AdvHdTextEncoding.Utf16)
+                        str = _reader.ReadZeroTerminatedUtf16String();
+                    else
+                        str = _reader.ReadZeroTerminatedSjisString();
                     _stream.Position = position;
                     return "\"" + str + "\"";
 
@@ -189,7 +195,11 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                 case 's':
                 {
                     int offset = (int)_stream.Position;
-                    _reader.SkipZeroTerminatedSjisString();
+                    if (TextEncoding == AdvHdTextEncoding.Utf16)
+                        _reader.SkipZeroTerminatedUtf16String();
+                    else
+                        _reader.SkipZeroTerminatedSjisString();
+                    
                     int length = (int)_stream.Position - offset;
                     return new Range(offset, length, ScriptStringType.Internal);
                 }

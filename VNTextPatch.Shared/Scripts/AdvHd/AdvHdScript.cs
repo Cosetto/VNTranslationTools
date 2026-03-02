@@ -37,10 +37,10 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
             Stream stream = new MemoryStream(_data);
             AdvHdDisassemblerBase[] disassemblers =
                 {
+                    new AdvHdDisassemblerV4(stream),
                     new AdvHdDisassemblerV1(stream),
                     new AdvHdDisassemblerV2(stream),
-                    new AdvHdDisassemblerV3(stream),
-                    new AdvHdDisassemblerV4(stream)
+                    new AdvHdDisassemblerV3(stream)
                 };
 
             foreach (AdvHdDisassemblerBase disassembler in disassemblers)

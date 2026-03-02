@@ -49,6 +49,7 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                 { 0x2D, "sb" },
                 { 0x2E, "" },
                 { 0x2F, "shf" },
+                { 0x30, "sf" },
                 { 0x32, "s" },
                 { 0x33, "ssbb" },
                 { 0x34, "ssbb" },
@@ -135,6 +136,7 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                 { 0xD2, "s" },
                 { 0xD3, "s" },
                 { 0xD4, "shh" },
+                { 0xE6, "aa" },
                 { 0xF8, "" },
                 { 0xF9, "bs" },
                 { 0xFA, "" },
@@ -150,4 +152,5 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
         {
         }
     }
+
 }

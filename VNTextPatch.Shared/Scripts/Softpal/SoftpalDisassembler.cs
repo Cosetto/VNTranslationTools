@@ -226,19 +226,10 @@ namespace VNTextPatch.Shared.Scripts.Softpal
 
         private void HandleSelectChoiceInstruction(Instruction instr)
         {
-            try
-            {
-                if (_stack.Count < 1)
-                    return;
-
-                Operand choice = _stack.Pop();
+            if (_stack.Count < 1) return;
+            var choice = _stack.Pop();
+            if (choice.Type == OperandType.Literal && choice.Value >= 0)
                 TextAddressEncountered?.Invoke(choice.Offset, ScriptStringType.Message);
-            }
-            finally
-            {
-                _stack.Clear();
-                _variables.Clear();
-            }
         }
 
         private static bool IsMessageInstruction(Instruction instr)

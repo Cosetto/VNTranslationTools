@@ -42,15 +42,15 @@ namespace VNTextPatch.Shared.Scripts.Softpal
 
         public IEnumerable<ScriptString> GetStrings()
         {
-            var textStream = new MemoryStream(_text);
-            var textReader = new BinaryReader(textStream);
+            MemoryStream textStream = new MemoryStream(_text);
+            BinaryReader textReader = new BinaryReader(textStream);
 
-            foreach (var operand in _textOperands)
+            foreach (TextOperand operand in _textOperands)
             {
                 int raw = BitConverter.ToInt32(_code, operand.Offset);
                 int type = (raw >> 28) & 0xF;
 
-                if (type!= 0)
+                if (type != 0)
                     continue;
 
                 int addr = (raw << 4) >> 4;

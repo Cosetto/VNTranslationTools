@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -29,7 +29,7 @@ namespace VNTextPatch.Shared.Scripts.Softpal
                 throw new FileNotFoundException($"POINT.DAT not found at {pointFilePath}");
 
             _text = File.ReadAllBytes(textFilePath);
-            _text[0] = (byte)'_';       // Explicitly mark as not encrypted
+            _text[0] = (byte)'_';
             List<int> labelOffsets = ReadPointDat(pointFilePath);
 
             _textOperands.Clear();
@@ -42,13 +42,24 @@ namespace VNTextPatch.Shared.Scripts.Softpal
 
         public IEnumerable<ScriptString> GetStrings()
         {
-            MemoryStream textStream = new MemoryStream(_text);
-            BinaryReader textReader = new BinaryReader(textStream);
+            var textStream = new MemoryStream(_text);
+            var textReader = new BinaryReader(textStream);
 
-            foreach (TextOperand operand in _textOperands)
+            foreach (var operand in _textOperands)
             {
-                int addr = BitConverter.ToInt32(_code, operand.Offset);
-                textStream.Position = addr + 4;
+                int raw = BitConverter.ToInt32(_code, operand.Offset);
+                int type = (raw >> 28) & 0xF;
+
+                if (type!= 0)
+                    continue;
+
+                int addr = (raw << 4) >> 4;
+                long targetPos = addr + 4;
+
+                if (addr < 0 || targetPos < 0 || targetPos >= _text.Length)
+                    throw new InvalidDataException($"[DEBUG] bad text addr at 0x{operand.Offset:X8}: raw=0x{raw:X8} type={type} addr={addr}");
+
+                textStream.Position = targetPos;
                 string text = textReader.ReadZeroTerminatedSjisString();
                 text = text.Replace("<br>", "\r\n");
                 yield return new ScriptString(text, operand.Type);
@@ -98,7 +109,7 @@ namespace VNTextPatch.Shared.Scripts.Softpal
             BinaryReader reader = new BinaryReader(stream);
 
             string magic = Encoding.ASCII.GetString(reader.ReadBytes(0x10));
-            if (magic != "$POINT_LIST_****")
+            if (magic != "$POINT_LIST_****" && magic != "_POINT_LIST_****")
                 throw new InvalidDataException("Failed to read POINT.DAT: invalid magic");
 
             List<int> labelOffsets = new List<int>();

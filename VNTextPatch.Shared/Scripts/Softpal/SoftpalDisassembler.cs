@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -14,18 +14,20 @@ namespace VNTextPatch.Shared.Scripts.Softpal
         private readonly List<int> _labelOffsets;
         private readonly BinaryReader _reader;
         private readonly StreamWriter _writer;
+        private readonly byte[] _textData;
         private readonly Dictionary<short, Action<Instruction>> _opcodeHandlers;
 
         private readonly Dictionary<int, UserMessageFunction> _userMessageFuncs = new Dictionary<int, UserMessageFunction>();
         private readonly Dictionary<int, Operand> _variables = new Dictionary<int, Operand>();
         private readonly Stack<Operand> _stack = new Stack<Operand>();
 
-        public SoftpalDisassembler(Stream stream, List<int> labelOffsets, StreamWriter writer = null)
+        public SoftpalDisassembler(Stream stream, List<int> labelOffsets, StreamWriter writer = null, byte[] textData = null)
         {
             _stream = stream;
             _labelOffsets = labelOffsets;
             _reader = new BinaryReader(stream);
             _writer = writer;
+            _textData = textData;
             _opcodeHandlers = new Dictionary<short, Action<Instruction>>
                               { 
                                   { SoftpalOpcodes.Mov,             HandleMovInstruction },
@@ -60,8 +62,10 @@ namespace VNTextPatch.Shared.Scripts.Softpal
                 }
                 else
                 {
+                    // Unhandled instructions might modify the stack, so clear it.
+                    // DO NOT clear variables here. Variables are local registers and persist across math/logic ops.
                     _stack.Clear();
-                    _variables.Clear();
+                    // _variables.Clear();
                 }
             }
         }
@@ -93,7 +97,7 @@ namespace VNTextPatch.Shared.Scripts.Softpal
                         }
                     }
                     _stack.Clear();
-                    _variables.Clear();
+                    // _variables.Clear();
                     continue;
                 }
 
@@ -103,31 +107,27 @@ namespace VNTextPatch.Shared.Scripts.Softpal
                         currentFuncOffset = instr.Offset;
                         currentFuncNumArgs = instr.Operands[0].Value;
                         _stack.Clear();
-                        _variables.Clear();
+                        _variables.Clear(); // Safe to clear here, entering a new function frame
                         break;
 
-                    case SoftpalOpcodes.Mov when instr.Operands[0].Type == OperandType.Variable:
-                        _variables[instr.Operands[0].Value] = instr.Operands[1];
+                    case SoftpalOpcodes.Mov:
+                        HandleMovInstruction(instr);
                         break;
 
                     case SoftpalOpcodes.Push:
-                        if (instr.Operands[0].Type == OperandType.Variable && _variables.ContainsKey(instr.Operands[0].Value))
-                            _stack.Push(_variables[instr.Operands[0].Value]);
-                        else
-                            _stack.Push(instr.Operands[0]);
-
+                        HandlePushInstruction(instr);
                         break;
 
                     case SoftpalOpcodes.Ret:
                         currentFuncOffset = -1;
                         currentFuncNumArgs = -1;
                         _stack.Clear();
-                        _variables.Clear();
+                        _variables.Clear(); // Safe to clear here, leaving function frame
                         break;
 
                     default:
                         _stack.Clear();
-                        _variables.Clear();
+                        // _variables.Clear();
                         break;
                 }
             }
@@ -136,15 +136,28 @@ namespace VNTextPatch.Shared.Scripts.Softpal
         private void HandleMovInstruction(Instruction instr)
         {
             if (instr.Operands[0].Type == OperandType.Variable)
-                _variables[instr.Operands[0].Value] = instr.Operands[1];
+            {
+                Operand rhs = instr.Operands[1];
+                // If moving a variable to a variable, resolve the stored literal to carry it forward
+                if (rhs.Type == OperandType.Variable && _variables.TryGetValue(rhs.Value, out Operand resolved))
+                {
+                    rhs = resolved;
+                }
+                _variables[instr.Operands[0].Value] = rhs;
+            }
         }
 
         private void HandlePushInstruction(Instruction instr)
         {
-            if (instr.Operands[0].Type == OperandType.Variable && _variables.ContainsKey(instr.Operands[0].Value))
-                _stack.Push(_variables[instr.Operands[0].Value]);
+            Operand op = instr.Operands[0];
+            if (op.Type == OperandType.Variable && _variables.TryGetValue(op.Value, out Operand resolved))
+            {
+                _stack.Push(resolved);
+            }
             else
-                _stack.Push(instr.Operands[0]);
+            {
+                _stack.Push(op);
+            }
         }
 
         private void HandleCallInstruction(Instruction instr)
@@ -180,7 +193,7 @@ namespace VNTextPatch.Shared.Scripts.Softpal
             finally
             {
                 _stack.Clear();
-                _variables.Clear();
+                // _variables.Clear();
             }
         }
 
@@ -220,16 +233,28 @@ namespace VNTextPatch.Shared.Scripts.Softpal
             finally
             {
                 _stack.Clear();
-                _variables.Clear();
+                // _variables.Clear();
             }
         }
 
         private void HandleSelectChoiceInstruction(Instruction instr)
         {
-            if (_stack.Count < 1) return;
-            var choice = _stack.Pop();
-            if (choice.Type == OperandType.Literal && choice.Value >= 0)
-                TextAddressEncountered?.Invoke(choice.Offset, ScriptStringType.Message);
+            try
+            {
+                if (_stack.Count < 1)
+                    return;
+
+                Operand choice = _stack.Pop();
+                if (choice.Type == OperandType.Literal && choice.Value >= 0)
+                {
+                    TextAddressEncountered?.Invoke(choice.Offset, ScriptStringType.Message);
+                }
+            }
+            finally
+            {
+                _stack.Clear();
+                // _variables.Clear();
+            }
         }
 
         private static bool IsMessageInstruction(Instruction instr)
@@ -284,11 +309,45 @@ namespace VNTextPatch.Shared.Scripts.Softpal
             return instr;
         }
 
+        private string TryResolveText(int rawValue)
+        {
+            if (_textData == null) return null;
+
+            int type = (rawValue >> 28) & 0xF;
+            if (type != 0) return null;
+
+            int addr = (rawValue << 4) >> 4;
+            int targetPos = addr + 4; 
+            
+            if (addr <= 0 || targetPos < 0 || targetPos >= _textData.Length) return null;
+
+            try
+            {
+                int endPos = Array.IndexOf(_textData, (byte)0, targetPos);
+                if (endPos == -1) endPos = _textData.Length;
+                
+                int len = endPos - targetPos;
+                if (len <= 0 || len > 2000) return null; 
+
+                string text = StringUtil.SjisEncoding.GetString(_textData, targetPos, len);
+                
+                if (string.IsNullOrWhiteSpace(text)) return null;
+                
+                return text.Replace("\r\n", "\\n").Replace("\n", "\\n").Replace("<br>", "\\n");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private void WriteInstruction(Instruction instr)
         {
             (string opcodeName, string operandTypes) = SoftpalOpcodes.Descriptions[instr.Opcode];
             opcodeName ??= instr.Opcode.ToString("X04");
             _writer.Write($"{instr.Offset:X08} {opcodeName}");
+
+            List<string> comments = new List<string>();
 
             for (int i = 0; i < instr.Operands.Count; i++)
             {
@@ -296,6 +355,7 @@ namespace VNTextPatch.Shared.Scripts.Softpal
 
                 int value = instr.Operands[i].Value;
                 char type = operandTypes[i];
+                
                 if (type == 'l')
                 {
                     if (instr.Operands[i].Type == OperandType.Literal)
@@ -320,6 +380,20 @@ namespace VNTextPatch.Shared.Scripts.Softpal
                 {
                     _writer.Write($"0x{value:X}");
                 }
+
+                if (instr.Operands[i].Type == OperandType.Literal)
+                {
+                    string resolvedText = TryResolveText(instr.Operands[i].RawValue);
+                    if (resolvedText != null)
+                    {
+                        comments.Add($"\"{resolvedText}\"");
+                    }
+                }
+            }
+
+            if (comments.Count > 0)
+            {
+                _writer.Write(" ; " + string.Join(", ", comments));
             }
 
             _writer.WriteLine();

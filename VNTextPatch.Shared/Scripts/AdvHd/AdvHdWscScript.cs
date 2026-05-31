@@ -180,7 +180,7 @@ namespace VNTextPatch.Shared.Scripts.AdvHd
                     if (suffix.Success)
                         newText += suffix.Value;
 
-                    newText = newText.Replace("\r\n", " \\n");
+                    newText = newText.Replace("\r\n", "\\n");
                     break;
             }
             return newText;

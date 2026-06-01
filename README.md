@@ -3,7 +3,7 @@ A tool for extracting original text from, and patching translated text into, a v
 
 | Engine                               | Extension(s)   | Remarks                                                                        |
 | ------------------------------------ | -------------- | ------------------------------------------------------------------------------ |
-| AdvHD                                | .ws2           |                                                                                |
+| AdvHD                                | .ws2/.wsc      |                                                                                |
 | ArcGameEngine                        | .bin           |                                                                                |
 | Artemis                              | .asb/.ast/.txt | Append `--format=artemistxt` to command line for .txt                          |
 | Buriko General Interpreter/Ethornell | (none)         | Append `--format=ethornell` to command line                                    |
